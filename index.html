@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>NgroupStream - Decentralized P2P Screen Share & Voice</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Decentralized P2P Engine (Torrent DHT + Nostr, Zero Server) -->
+  <script src="./js/p2p-bundle.js"></script>
+  <link rel="stylesheet" href="./css/style.css">
+</head>
+<body class="dark-theme">
+
+  <!-- TOP HEADER / NAV BAR -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="brand-badge">
+        <div class="brand-icon-wrapper">
+          <i data-lucide="radio" class="brand-icon"></i>
+        </div>
+        <div class="brand-text">
+          <span class="brand-name">NgroupStream</span>
+          <span class="p2p-badge"><span class="pulse-dot"></span> P2P ENCRYPTED (DIRECT)</span>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="room-info" id="roomInfo">
+        <i data-lucide="hash" class="info-icon"></i>
+        <span class="room-name" id="roomNameDisplay">General</span>
+        <span class="participant-count-badge" id="participantCount">1 Online</span>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="connection-stats" id="connectionStats" title="Direct Peer-to-Peer Quality">
+        <i data-lucide="activity" class="stat-icon"></i>
+        <span id="latencyDisplay">P2P Ready</span>
+      </div>
+
+      <button class="btn-secondary" id="btnCopyLink" title="Copy Room Link">
+        <i data-lucide="link" class="btn-icon"></i>
+        <span class="btn-label">Share Link</span>
+      </button>
+
+      <button class="btn-icon-only" id="btnSettings" title="Audio & Video Settings">
+        <i data-lucide="settings" class="btn-icon"></i>
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN APP CONTAINER -->
+  <main class="app-main">
+
+    <!-- THEATER / STAGE CONTAINER -->
+    <div class="stage-container" id="stageContainer">
+
+      <!-- HERO SCREEN SHARE STAGE (Shown when active) -->
+      <div class="screen-stage hidden" id="screenStage">
+        <div class="screen-wrapper">
+          <video id="screenVideo" autoplay playsinline></video>
+          <div class="screen-overlay-top">
+            <div class="presenter-tag">
+              <i data-lucide="airplay" class="tag-icon"></i>
+              <span id="screenPresenterName">Presenter</span>
+            </div>
+            <div class="screen-actions">
+              <span class="quality-badge" id="screenQualityBadge">1080p 60fps</span>
+              <button class="stage-icon-btn" id="btnPipScreen" title="Picture in Picture">
+                <i data-lucide="picture-in-picture-2"></i>
+              </button>
+              <button class="stage-icon-btn" id="btnFullscreenScreen" title="Toggle Fullscreen">
+                <i data-lucide="maximize-2"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PARTICIPANT TILES GRID -->
+      <div class="participants-grid layout-hero" id="participantsGrid">
+        <!-- Local User Tile -->
+        <div class="participant-tile local-tile" id="localTile">
+          <div class="video-container">
+            <video id="localVideo" autoplay playsinline muted></video>
+            <div class="avatar-fallback" id="localAvatar">
+              <div class="avatar-circle" id="localAvatarCircle">Me</div>
+            </div>
+          </div>
+          
+          <div class="tile-bar">
+            <div class="user-meta">
+              <span class="speaking-halo" id="localSpeakingHalo"></span>
+              <span class="user-name" id="localUserName">You (Host)</span>
+            </div>
+            <div class="tile-status-icons">
+              <span class="status-icon" id="localMicStatus"><i data-lucide="mic"></i></span>
+              <span class="status-icon" id="localCamStatus"><i data-lucide="video"></i></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Remote tiles are appended dynamically here -->
+      </div>
+
+    </div>
+
+    <!-- SIDE PANEL (CHAT & PARTICIPANTS) -->
+    <aside class="side-panel collapsed" id="sidePanel">
+      <div class="panel-header">
+        <div class="panel-tabs">
+          <button class="tab-btn active" id="tabChatBtn">
+            <i data-lucide="message-square"></i>
+            <span>Chat</span>
+          </button>
+          <button class="tab-btn" id="tabUsersBtn">
+            <i data-lucide="users"></i>
+            <span>Participants</span>
+          </button>
+        </div>
+        <button class="btn-close-panel" id="btnClosePanel">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+
+      <!-- CHAT TAB CONTENT -->
+      <div class="tab-content" id="chatTabContent">
+        <div class="chat-messages" id="chatMessages">
+          <div class="chat-welcome">
+            <div class="welcome-icon"><i data-lucide="shield-check"></i></div>
+            <h4>Direct P2P Encrypted Room</h4>
+            <p>Zero third-party servers. Audio, video, and messages stream directly between computers.</p>
+          </div>
+        </div>
+        <form class="chat-input-form" id="chatForm">
+          <input type="text" id="chatInput" placeholder="Send a direct message..." autocomplete="off" maxlength="1000">
+          <button type="submit" class="btn-send-chat" id="btnSendChat">
+            <i data-lucide="send"></i>
+          </button>
+        </form>
+      </div>
+
+      <!-- PARTICIPANTS TAB CONTENT -->
+      <div class="tab-content hidden" id="usersTabContent">
+        <div class="participants-list" id="participantsList">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </aside>
+
+  </main>
+
+  <!-- FLOATING BOTTOM CONTROL DOCK -->
+  <footer class="control-dock">
+    <div class="dock-container">
+      
+      <!-- Mic Toggle -->
+      <button class="dock-btn" id="btnToggleMic" title="Mute / Unmute (M)">
+        <div class="btn-glow-ring" id="micGlowRing"></div>
+        <i data-lucide="mic" id="iconMic"></i>
+        <span class="dock-label">Mic</span>
+      </button>
+
+      <!-- Camera Toggle -->
+      <button class="dock-btn" id="btnToggleCam" title="Camera On / Off (V)">
+        <i data-lucide="video" id="iconCam"></i>
+        <span class="dock-label">Cam</span>
+      </button>
+
+      <!-- Screen Share Toggle -->
+      <button class="dock-btn primary-action" id="btnToggleScreen" title="Share Screen (S)">
+        <i data-lucide="screen-share" id="iconScreen"></i>
+        <span class="dock-label" id="labelScreen">Share</span>
+      </button>
+
+      <div class="dock-divider"></div>
+
+      <!-- Chat Toggle -->
+      <button class="dock-btn has-badge" id="btnToggleChat" title="Toggle Chat (C)">
+        <span class="unread-badge hidden" id="chatUnreadBadge">0</span>
+        <i data-lucide="message-square" id="iconChat"></i>
+        <span class="dock-label">Chat</span>
+      </button>
+
+      <!-- Leave / Disconnect -->
+      <button class="dock-btn danger-action" id="btnLeaveCall" title="Leave Session">
+        <i data-lucide="phone-off"></i>
+        <span class="dock-label">Leave</span>
+      </button>
+
+    </div>
+  </footer>
+
+  <!-- SETTINGS MODAL -->
+  <div class="modal-overlay hidden" id="settingsModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="sliders" class="modal-title-icon"></i> Audio & Video Devices</h3>
+        <button class="btn-close-modal" id="btnCloseSettings"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="modal-body">
+        <div class="setting-group">
+          <label for="selectAudioInput"><i data-lucide="mic"></i> Microphone</label>
+          <select id="selectAudioInput" class="custom-select"></select>
+        </div>
+
+        <div class="setting-group">
+          <label for="selectVideoInput"><i data-lucide="video"></i> Camera</label>
+          <select id="selectVideoInput" class="custom-select"></select>
+        </div>
+
+        <div class="setting-group" id="speakerGroup">
+          <label for="selectAudioOutput"><i data-lucide="volume-2"></i> Speaker Output</label>
+          <select id="selectAudioOutput" class="custom-select"></select>
+        </div>
+
+        <div class="setting-group">
+          <label for="selectNetworkMode"><i data-lucide="network"></i> Signaling Swarm Protocol</label>
+          <select id="selectNetworkMode" class="custom-select">
+            <option value="torrent" selected>BitTorrent DHT Swarm (Decentralized, Open)</option>
+            <option value="nostr">Nostr Relays (Decentralized, Censorship-Resistant)</option>
+          </select>
+        </div>
+
+        <div class="setting-group">
+          <label for="selectScreenPreset"><i data-lucide="monitor"></i> Screen Share Quality Preset</label>
+          <select id="selectScreenPreset" class="custom-select">
+            <option value="gaming" selected>Ultra Smooth (1080p @ 60 FPS)</option>
+            <option value="balanced">Balanced (1080p @ 30 FPS)</option>
+            <option value="text">Crisp Text / Detail (2K @ 30 FPS)</option>
+          </select>
+        </div>
+
+        <div class="toggle-group">
+          <div class="toggle-info">
+            <span class="toggle-title">AI Noise Suppression</span>
+            <span class="toggle-desc">Filters background keyboard clicks and ambient noise</span>
+          </div>
+          <input type="checkbox" id="checkNoiseSuppression" checked class="custom-toggle">
+        </div>
+
+        <div class="toggle-group">
+          <div class="toggle-info">
+            <span class="toggle-title">Acoustic Echo Cancellation</span>
+            <span class="toggle-desc">Prevents speaker feedback into microphone</span>
+          </div>
+          <input type="checkbox" id="checkEchoCancellation" checked class="custom-toggle">
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-secondary" id="btnCancelSettings">Cancel</button>
+        <button class="btn-primary" id="btnSaveSettings">Apply Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOBBY / PRE-JOIN MODAL -->
+  <div class="modal-overlay" id="lobbyModal">
+    <div class="modal-card lobby-card">
+      <div class="lobby-brand">
+        <div class="brand-icon-wrapper large">
+          <i data-lucide="radio" class="brand-icon large"></i>
+        </div>
+        <h2>Join NgroupStream Room</h2>
+        <p class="lobby-subtitle">100% Direct P2P • Zero Third Parties • 60 FPS Screen Share</p>
+      </div>
+
+      <!-- Video / Audio Preview Box -->
+      <div class="preview-container">
+        <video id="previewVideo" autoplay playsinline muted></video>
+        <div class="preview-avatar" id="previewAvatar">
+          <i data-lucide="user" class="preview-user-icon"></i>
+        </div>
+        <div class="preview-controls">
+          <button class="preview-btn" id="btnPreviewMic" title="Toggle Mic">
+            <i data-lucide="mic" id="iconPreviewMic"></i>
+          </button>
+          <button class="preview-btn" id="btnPreviewCam" title="Toggle Cam">
+            <i data-lucide="video" id="iconPreviewCam"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="lobby-inputs">
+        <div class="input-group">
+          <label for="inputUsername">Your Display Name</label>
+          <input type="text" id="inputUsername" placeholder="e.g. Alex" autofocus maxlength="30">
+        </div>
+        <div class="input-group">
+          <label for="inputRoomId">Room Code</label>
+          <input type="text" id="inputRoomId" placeholder="e.g. movie-night" maxlength="50">
+        </div>
+      </div>
+
+      <button class="btn-primary full-width" id="btnEnterRoom">
+        <span>Enter Room</span>
+        <i data-lucide="arrow-right"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION CONTAINER -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Application Logic -->
+  <script src="./js/app.js"></script>
+  <script>
+    // Initialize Lucide Icons
+    lucide.createIcons();
+  </script>
+</body>
+</html>
