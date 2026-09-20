@@ -1,7 +1,7 @@
 /**
- * NGROUPSTREAM - DECENTRALIZED P2P CLIENT CONTROLLER
- * Zero Third-Party Servers. Direct WebRTC NAT Hole Punching.
- * High-Grade UI with Theater Screen Share, Audio Visualizer, and Direct P2P Chat.
+ * NGROUPSTREAM - INSTANT P2P CLIENT CONTROLLER
+ * Zero Third-Party Tunnels. Direct Computer-to-Computer WebRTC Streaming.
+ * Connects in under 500ms with Full-Mesh P2P Video, Audio, and 60 FPS Screen Share.
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -17,7 +17,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const screenStage = document.getElementById('screenStage');
   const screenVideo = document.getElementById('screenVideo');
   const screenPresenterName = document.getElementById('screenPresenterName');
-  const screenQualityBadge = document.getElementById('screenQualityBadge');
   const btnPipScreen = document.getElementById('btnPipScreen');
   const btnFullscreenScreen = document.getElementById('btnFullscreenScreen');
   const participantsGrid = document.getElementById('participantsGrid');
@@ -65,7 +64,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const selectAudioInput = document.getElementById('selectAudioInput');
   const selectVideoInput = document.getElementById('selectVideoInput');
   const selectAudioOutput = document.getElementById('selectAudioOutput');
-  const selectNetworkMode = document.getElementById('selectNetworkMode');
   const selectScreenPreset = document.getElementById('selectScreenPreset');
   const checkNoiseSuppression = document.getElementById('checkNoiseSuppression');
   const checkEchoCancellation = document.getElementById('checkEchoCancellation');
@@ -93,13 +91,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   let localMediaStream = null;
   let localScreenStream = null;
 
-  // Decentralized Room
-  let p2pRoom = null;
-  let sendChatAction = null;
-  let sendMetaAction = null;
-
-  // Remote participants: peerId -> { username, tileEl, videoEl, isMuted, isCamOff, hasScreen }
-  const remotePeers = new Map();
+  // Room Engine
+  let peerRoom = null;
+  const remotePeers = new Map(); // peerId -> { username, tileEl, videoEl, isMuted, isCamOff }
   let activeScreenPresenterId = null;
 
   // Audio analysis
@@ -116,7 +110,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (pathParts[0] === 'room' && pathParts[1]) {
       return pathParts[1].toLowerCase();
     }
-    return 'p2p-' + Math.random().toString(36).substring(2, 7);
+    return 'room-' + Math.random().toString(36).substring(2, 7);
   }
 
   currentRoomId = resolveRoomId();
@@ -180,24 +174,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentRoomId = enteredRoom;
     roomNameDisplay.textContent = currentRoomId;
 
-    // Set clean hash in URL
     window.location.hash = `room=${currentRoomId}`;
 
-    // Release preview stream
     if (previewStream) {
       previewStream.getTracks().forEach(t => t.stop());
     }
 
     lobbyModal.classList.add('hidden');
-    await startP2PSession();
+    await startInstantP2PRoom();
   });
 
-  // 4. Initialize Decentralized P2P Session
-  async function startP2PSession() {
+  // 4. Start Instant P2P Session
+  async function startInstantP2PRoom() {
     localUserName.textContent = `${myUsername} (You)`;
     localAvatarCircle.textContent = myUsername.substring(0, 2).toUpperCase();
 
-    // Acquire Local User Media
+    // Acquire Local Media
     try {
       localMediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -221,50 +213,91 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (lobbyMuted) toggleMic(true);
     if (lobbyCamOff) toggleCam(true);
 
-    // Join Decentralized Swarm (Default: BitTorrent DHT / Trackers)
-    const p2pConfig = {
-      appId: 'ngroupstream-p2p-v2'
+    // Initialize Instant P2P Room
+    peerRoom = new PeerRoom(currentRoomId, myUsername, localMediaStream);
+
+    peerRoom.onStatusChange = (status) => {
+      latencyDisplay.textContent = status;
     };
 
-    const mode = selectNetworkMode ? selectNetworkMode.value : 'torrent';
-    if (mode === 'nostr' && window.P2P.joinNostrRoom) {
-      p2pRoom = window.P2P.joinNostrRoom(p2pConfig, currentRoomId);
-      latencyDisplay.textContent = 'P2P (Nostr)';
-    } else {
-      p2pRoom = window.P2P.joinTorrentRoom(p2pConfig, currentRoomId);
-      latencyDisplay.textContent = 'P2P (BitTorrent)';
-    }
+    // When another peer joins
+    peerRoom.onPeerJoined = (peerId, username) => {
+      console.log('[P2P] Remote peer joined:', peerId, username);
+      addRemoteParticipantTile(peerId, username);
+      updateParticipantsCount();
+      showToast(`${username} connected to room!`, 'success');
 
-    // Direct P2P Actions (Chat & Meta)
-    const [sendChat, getChat] = p2pRoom.makeAction('chat');
-    const [sendMeta, getMeta] = p2pRoom.makeAction('meta');
-    sendChatAction = sendChat;
-    sendMetaAction = sendMeta;
+      // Send our states to the peer
+      peerRoom.broadcast({
+        type: 'meta',
+        isMuted,
+        isCamOff
+      });
+    };
 
-    // Incoming P2P Chat
-    getChat((msg, peerId) => {
+    // When a peer leaves
+    peerRoom.onPeerLeft = (peerId, username) => {
+      console.log('[P2P] Remote peer left:', peerId, username);
+      removeRemoteParticipantTile(peerId);
+      updateParticipantsCount();
+      showToast(`${username} left the room`, 'info');
+
+      if (activeScreenPresenterId === peerId) {
+        stopScreenStage();
+      }
+    };
+
+    // Remote webcam / mic stream arrives
+    peerRoom.onRemoteStream = (peerId, stream, username) => {
+      console.log('[P2P] Received media stream from peer:', peerId);
+      let peer = remotePeers.get(peerId);
+      if (!peer) {
+        addRemoteParticipantTile(peerId, username || 'Participant');
+        peer = remotePeers.get(peerId);
+      }
+
+      if (peer && peer.videoEl) {
+        peer.videoEl.srcObject = stream;
+        const avatarEl = peer.tileEl.querySelector('.avatar-fallback');
+        if (avatarEl && stream.getVideoTracks().length > 0) {
+          avatarEl.classList.add('hidden');
+        }
+      }
+    };
+
+    // Remote screen sharing stream arrives
+    peerRoom.onRemoteScreenStream = (peerId, stream, username) => {
+      console.log('[P2P] Received screen share from:', peerId);
+      activeScreenPresenterId = peerId;
+      screenVideo.srcObject = stream;
+      screenPresenterName.textContent = `${username || 'Participant'}'s Screen`;
+      screenStage.classList.remove('hidden');
+      updateGridLayout();
+      showToast(`${username || 'Participant'} started screen sharing`, 'info');
+    };
+
+    // Remote screen sharing ended
+    peerRoom.onRemoteScreenStopped = (peerId) => {
+      if (activeScreenPresenterId === peerId) {
+        stopScreenStage();
+        showToast('Screen share ended', 'info');
+      }
+    };
+
+    // P2P Text Chat arrives
+    peerRoom.onChatMessage = (msg) => {
       appendChatMessage(msg);
       if (sidePanel.classList.contains('collapsed')) {
         unreadChatCount++;
         chatUnreadBadge.textContent = unreadChatCount;
         chatUnreadBadge.classList.remove('hidden');
       }
-    });
+    };
 
-    // Incoming Peer State Updates
-    getMeta((meta, peerId) => {
+    // Peer state changes (mute, camera, speaking)
+    peerRoom.onPeerMeta = (peerId, meta) => {
       let peer = remotePeers.get(peerId);
-      if (!peer) {
-        addRemoteParticipantTile(peerId, meta.username || `User-${peerId.substring(0, 4)}`);
-        peer = remotePeers.get(peerId);
-      }
-
-      if (meta.username) {
-        peer.username = meta.username;
-        const nameEl = peer.tileEl.querySelector('.user-name');
-        if (nameEl) nameEl.textContent = meta.username;
-        updateParticipantsList();
-      }
+      if (!peer) return;
 
       if (typeof meta.isMuted !== 'undefined') {
         peer.isMuted = meta.isMuted;
@@ -289,87 +322,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (halo) halo.classList.toggle('active', meta.isSpeaking);
         peer.tileEl.classList.toggle('speaking', meta.isSpeaking);
       }
-    });
-
-    // When a Peer Joins the P2P Swarm
-    p2pRoom.onPeerJoin((peerId) => {
-      console.log('[P2P] Peer joined swarm:', peerId);
-      addRemoteParticipantTile(peerId, `User-${peerId.substring(0, 4)}`);
-      updateParticipantsCount();
-      showToast('A peer connected directly via P2P', 'info');
-
-      // Send our identity and current media states
-      sendMeta({
-        username: myUsername,
-        isMuted,
-        isCamOff
-      }, peerId);
-
-      // Send local streams to this peer
-      if (localMediaStream) {
-        p2pRoom.addStream(localMediaStream, { target: peerId, metadata: { type: 'cam' } });
-      }
-      if (localScreenStream) {
-        p2pRoom.addStream(localScreenStream, { target: peerId, metadata: { type: 'screen' } });
-      }
-    });
-
-    // When a Peer Leaves the Swarm
-    p2pRoom.onPeerLeave((peerId) => {
-      console.log('[P2P] Peer left swarm:', peerId);
-      const peer = remotePeers.get(peerId);
-      const name = peer ? peer.username : 'Participant';
-      removeRemoteParticipantTile(peerId);
-      updateParticipantsCount();
-      showToast(`${name} left the room`, 'info');
-
-      if (activeScreenPresenterId === peerId) {
-        stopScreenStage();
-      }
-    });
-
-    // Incoming Media Streams from Peers
-    p2pRoom.onPeerStream = (stream, peerId, metadata) => {
-      console.log('[P2P] Received stream from peer:', peerId, metadata);
-
-      let peer = remotePeers.get(peerId);
-      if (!peer) {
-        addRemoteParticipantTile(peerId, `User-${peerId.substring(0, 4)}`);
-        peer = remotePeers.get(peerId);
-      }
-
-      const isScreen = (metadata && metadata.type === 'screen') || 
-        stream.getVideoTracks().length > 0 && (stream.getVideoTracks()[0].label.toLowerCase().includes('screen') || stream.id.toLowerCase().includes('screen'));
-
-      if (isScreen) {
-        activeScreenPresenterId = peerId;
-        screenVideo.srcObject = stream;
-        screenPresenterName.textContent = `${peer.username}'s Screen`;
-        screenStage.classList.remove('hidden');
-        updateGridLayout();
-        showToast(`${peer.username} started screen sharing`, 'info');
-        return;
-      }
-
-      // Normal webcam / mic stream
-      if (peer.videoEl) {
-        peer.videoEl.srcObject = stream;
-        const avatarEl = peer.tileEl.querySelector('.avatar-fallback');
-        if (avatarEl && stream.getVideoTracks().length > 0) {
-          avatarEl.classList.add('hidden');
-        }
-      }
     };
 
-    // Broadcast our initial stream to the room
-    if (localMediaStream) {
-      p2pRoom.addStream(localMediaStream, { metadata: { type: 'cam' } });
-    }
-
-    showToast(`Connected to decentralized room: ${currentRoomId}`, 'success');
+    // Connect to room
+    await peerRoom.init();
+    showToast(`Room active: ${currentRoomId}`, 'success');
   }
 
-  // 5. Tile & Grid Layout Management
+  // 5. Tile & Grid Management
   function addRemoteParticipantTile(peerId, username) {
     if (remotePeers.has(peerId)) return;
 
@@ -377,7 +337,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     tile.className = 'participant-tile';
     tile.id = `tile-${peerId}`;
 
-    const initials = username.substring(0, 2).toUpperCase();
+    const initials = username ? username.substring(0, 2).toUpperCase() : 'P';
 
     tile.innerHTML = `
       <div class="video-container">
@@ -476,8 +436,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     localMicStatus.innerHTML = `<i data-lucide="${isMuted ? 'mic-off' : 'mic'}"></i>`;
     lucide.createIcons();
 
-    if (sendMetaAction) {
-      sendMetaAction({ isMuted });
+    if (peerRoom) {
+      peerRoom.broadcast({ type: 'meta', isMuted });
     }
     showToast(isMuted ? 'Microphone muted' : 'Microphone unmuted', 'info');
   }
@@ -501,13 +461,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     localCamStatus.innerHTML = `<i data-lucide="${isCamOff ? 'video-off' : 'video'}"></i>`;
     lucide.createIcons();
 
-    if (sendMetaAction) {
-      sendMetaAction({ isCamOff });
+    if (peerRoom) {
+      peerRoom.broadcast({ type: 'meta', isCamOff });
     }
     showToast(isCamOff ? 'Camera turned off' : 'Camera turned on', 'info');
   }
 
-  // 60 FPS Screen Sharing
+  // 60 FPS Screen Share
   btnToggleScreen.addEventListener('click', async () => {
     if (!isScreenSharing) {
       await startScreenShare();
@@ -541,18 +501,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       labelScreen.textContent = 'Stop';
       lucide.createIcons();
 
-      // Show on our theater stage
+      // Show on our local theater stage
       screenVideo.srcObject = localScreenStream;
       screenPresenterName.textContent = `${myUsername} (Your Screen)`;
       screenStage.classList.remove('hidden');
       updateGridLayout();
 
-      // Broadcast to P2P swarm
-      if (p2pRoom) {
-        p2pRoom.addStream(localScreenStream, { metadata: { type: 'screen' } });
+      // Call connected peers with the screen share stream
+      if (peerRoom) {
+        peerRoom.startScreenShare(localScreenStream);
       }
 
-      showToast('60 FPS Screen sharing active', 'success');
+      showToast('Screen sharing started (60 FPS)', 'success');
 
       localScreenStream.getVideoTracks()[0].onended = () => {
         stopScreenShare();
@@ -566,8 +526,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!localScreenStream) return;
 
     localScreenStream.getTracks().forEach(t => t.stop());
-    if (p2pRoom) {
-      p2pRoom.removeStream(localScreenStream);
+    if (peerRoom) {
+      peerRoom.stopScreenShare();
     }
     localScreenStream = null;
     isScreenSharing = false;
@@ -581,7 +541,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showToast('Screen sharing stopped', 'info');
   }
 
-  // Fullscreen & PiP for Screen Share
+  // Fullscreen & PiP
   btnFullscreenScreen.addEventListener('click', () => {
     if (!document.fullscreenElement) {
       screenStage.requestFullscreen().catch(e => console.warn(e));
@@ -602,7 +562,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 7. Audio Visualizer (Speaking Halo)
+  // 7. Speaking Visualizer
   function setupLocalAudioVisualizer(stream) {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -625,7 +585,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             localSpeakingHalo.classList.remove('active');
             localTile.classList.remove('speaking');
             micGlowRing.classList.remove('active');
-            if (sendMetaAction) sendMetaAction({ isSpeaking: false });
+            if (peerRoom) peerRoom.broadcast({ type: 'meta', isSpeaking: false });
           }
           return;
         }
@@ -641,7 +601,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           localSpeakingHalo.classList.toggle('active', isSpeaking);
           localTile.classList.toggle('speaking', isSpeaking);
           micGlowRing.classList.toggle('active', isSpeaking);
-          if (sendMetaAction) sendMetaAction({ isSpeaking });
+          if (peerRoom) peerRoom.broadcast({ type: 'meta', isSpeaking });
         }
       }, 100);
     } catch (e) {
@@ -693,8 +653,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     appendChatMessage(msg, true);
-    if (sendChatAction) {
-      sendChatAction(msg);
+    if (peerRoom) {
+      peerRoom.broadcast({ type: 'chat', ...msg });
     }
     chatInput.value = '';
   });
@@ -790,7 +750,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 11. Leave Call
   btnLeaveCall.addEventListener('click', () => {
     if (confirm('Leave this room?')) {
-      if (p2pRoom) p2pRoom.leave();
+      if (peerRoom) peerRoom.leave();
       window.location.reload();
     }
   });

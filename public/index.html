@@ -9,8 +9,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <!-- Decentralized P2P Engine (Torrent DHT + Nostr, Zero Server) -->
-  <script src="./js/p2p-bundle.js"></script>
+  <!-- Ultra-Fast P2P WebRTC Engine (Under 500ms connection) -->
+  <script src="./js/peerjs.min.js"></script>
+  <script src="./js/peer-room.js"></script>
   <link rel="stylesheet" href="./css/style.css">
 </head>
 <body class="dark-theme">
@@ -216,14 +217,6 @@
         <div class="setting-group" id="speakerGroup">
           <label for="selectAudioOutput"><i data-lucide="volume-2"></i> Speaker Output</label>
           <select id="selectAudioOutput" class="custom-select"></select>
-        </div>
-
-        <div class="setting-group">
-          <label for="selectNetworkMode"><i data-lucide="network"></i> Signaling Swarm Protocol</label>
-          <select id="selectNetworkMode" class="custom-select">
-            <option value="torrent" selected>BitTorrent DHT Swarm (Decentralized, Open)</option>
-            <option value="nostr">Nostr Relays (Decentralized, Censorship-Resistant)</option>
-          </select>
         </div>
 
         <div class="setting-group">
