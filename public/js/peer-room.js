@@ -112,10 +112,10 @@ class PeerRoom {
 
       this._handleDataConnection(conn);
 
-      // Call host with local stream
+      // Call host with local voice stream
       if (this.localStream) {
         const call = peer.call(this.hostId, this.localStream, {
-          metadata: { type: 'cam', username: this.username }
+          metadata: { type: 'voice', username: this.username }
         });
         this._handleMediaCall(call);
       }
@@ -194,7 +194,7 @@ class PeerRoom {
 
             if (this.localStream) {
               const call = this.peer.call(remoteId, this.localStream, {
-                metadata: { type: 'cam', username: this.username }
+                metadata: { type: 'voice', username: this.username }
               });
               this._handleMediaCall(call);
             }

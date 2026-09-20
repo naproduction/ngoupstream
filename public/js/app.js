@@ -1,7 +1,11 @@
 /**
- * NGROUPSTREAM - INSTANT P2P CLIENT CONTROLLER
- * Zero Third-Party Tunnels. Direct Computer-to-Computer WebRTC Streaming.
- * Connects in under 500ms with Full-Mesh P2P Video, Audio, and 60 FPS Screen Share.
+ * NGROUPSTREAM - PURE VOICE CALL & 60 FPS SCREEN SHARING
+ * Zero Video Call (Camera removed completely).
+ * Features:
+ *  - Crystal-clear Audio Only (Noise Suppression & Echo Cancellation)
+ *  - 60 FPS Ultra-Smooth Screen Sharing with Tab Audio
+ *  - Discord-grade Voice Avatars with Speaking Animations
+ *  - Real-time P2P Data Chat
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -12,7 +16,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnCopyLink = document.getElementById('btnCopyLink');
   const btnSettings = document.getElementById('btnSettings');
 
-  // Stage & Tiles
+  // Stage & Screen Share
   const stageContainer = document.getElementById('stageContainer');
   const screenStage = document.getElementById('screenStage');
   const screenVideo = document.getElementById('screenVideo');
@@ -21,24 +25,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnFullscreenScreen = document.getElementById('btnFullscreenScreen');
   const participantsGrid = document.getElementById('participantsGrid');
 
-  // Local User Elements
+  // Local Voice Tile
   const localTile = document.getElementById('localTile');
-  const localVideo = document.getElementById('localVideo');
-  const localAvatar = document.getElementById('localAvatar');
   const localAvatarCircle = document.getElementById('localAvatarCircle');
   const localUserName = document.getElementById('localUserName');
   const localSpeakingHalo = document.getElementById('localSpeakingHalo');
   const localMicStatus = document.getElementById('localMicStatus');
-  const localCamStatus = document.getElementById('localCamStatus');
 
-  // Dock Buttons
+  // Dock Buttons (Voice + Screen Share only)
   const btnToggleMic = document.getElementById('btnToggleMic');
-  const btnToggleCam = document.getElementById('btnToggleCam');
   const btnToggleScreen = document.getElementById('btnToggleScreen');
   const btnToggleChat = document.getElementById('btnToggleChat');
   const btnLeaveCall = document.getElementById('btnLeaveCall');
   const iconMic = document.getElementById('iconMic');
-  const iconCam = document.getElementById('iconCam');
   const iconScreen = document.getElementById('iconScreen');
   const labelScreen = document.getElementById('labelScreen');
   const micGlowRing = document.getElementById('micGlowRing');
@@ -62,45 +61,41 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnCancelSettings = document.getElementById('btnCancelSettings');
   const btnSaveSettings = document.getElementById('btnSaveSettings');
   const selectAudioInput = document.getElementById('selectAudioInput');
-  const selectVideoInput = document.getElementById('selectVideoInput');
   const selectAudioOutput = document.getElementById('selectAudioOutput');
   const selectScreenPreset = document.getElementById('selectScreenPreset');
   const checkNoiseSuppression = document.getElementById('checkNoiseSuppression');
   const checkEchoCancellation = document.getElementById('checkEchoCancellation');
 
-  // Lobby Modal
+  // Lobby Modal (Voice Profile)
   const lobbyModal = document.getElementById('lobbyModal');
-  const previewVideo = document.getElementById('previewVideo');
-  const previewAvatar = document.getElementById('previewAvatar');
+  const lobbyMicLevel = document.getElementById('lobbyMicLevel');
   const btnPreviewMic = document.getElementById('btnPreviewMic');
-  const btnPreviewCam = document.getElementById('btnPreviewCam');
   const inputUsername = document.getElementById('inputUsername');
   const inputRoomId = document.getElementById('inputRoomId');
   const btnEnterRoom = document.getElementById('btnEnterRoom');
 
-  // App State
+  // State
   let currentRoomId = 'general';
   let myUsername = 'You';
   let isMuted = false;
-  let isCamOff = false;
   let isScreenSharing = false;
   let unreadChatCount = 0;
   let previewStream = null;
 
-  // Media Streams
-  let localMediaStream = null;
+  // Media Streams (Audio only for voice!)
+  let localVoiceStream = null;
   let localScreenStream = null;
 
-  // Room Engine
+  // PeerRoom
   let peerRoom = null;
-  const remotePeers = new Map(); // peerId -> { username, tileEl, videoEl, isMuted, isCamOff }
+  const remotePeers = new Map(); // peerId -> { username, tileEl, audioEl, isMuted }
   let activeScreenPresenterId = null;
 
-  // Audio analysis
+  // Web Audio Analysers
   let audioContext = null;
-  let analyser = null;
+  let localAnalyser = null;
 
-  // 1. Resolve Room ID from URL
+  // 1. Resolve Room ID
   function resolveRoomId() {
     const hash = window.location.hash.replace('#', '');
     if (hash.startsWith('room=')) {
@@ -117,7 +112,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   roomNameDisplay.textContent = currentRoomId;
   inputRoomId.value = currentRoomId;
 
-  // Stored username
+  // Stored name
   const savedName = localStorage.getItem('ngroup_username');
   if (savedName) {
     inputUsername.value = savedName;
@@ -125,19 +120,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     inputUsername.value = 'User-' + Math.floor(1000 + Math.random() * 9000);
   }
 
-  // 2. Camera & Mic Preview
+  // 2. Microphone Test in Lobby (No Camera Requested!)
   try {
-    previewStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    previewVideo.srcObject = previewStream;
-    previewAvatar.classList.add('hidden');
+    previewStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true },
+      video: false
+    });
+    setupLobbyMicMeter(previewStream);
   } catch (e) {
-    console.log('Preview media unavailable, using avatar mode:', e.message);
-    previewAvatar.classList.remove('hidden');
+    console.log('Microphone preview unavailable:', e.message);
   }
 
   let lobbyMuted = false;
-  let lobbyCamOff = false;
-
   btnPreviewMic.addEventListener('click', () => {
     lobbyMuted = !lobbyMuted;
     if (previewStream && previewStream.getAudioTracks()[0]) {
@@ -148,16 +142,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     lucide.createIcons();
   });
 
-  btnPreviewCam.addEventListener('click', () => {
-    lobbyCamOff = !lobbyCamOff;
-    if (previewStream && previewStream.getVideoTracks()[0]) {
-      previewStream.getVideoTracks()[0].enabled = !lobbyCamOff;
+  function setupLobbyMicMeter(stream) {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      const src = ctx.createMediaStreamSource(stream);
+      const anl = ctx.createAnalyser();
+      anl.fftSize = 128;
+      src.connect(anl);
+      const data = new Uint8Array(anl.frequencyBinCount);
+
+      const updateMeter = () => {
+        if (!lobbyModal.classList.contains('hidden')) {
+          anl.getByteFrequencyData(data);
+          let sum = 0;
+          for (let i = 0; i < data.length; i++) sum += data[i];
+          const avg = sum / data.length;
+          const pct = Math.min(100, Math.round((avg / 128) * 100));
+          if (lobbyMicLevel) lobbyMicLevel.style.width = `${pct}%`;
+          requestAnimationFrame(updateMeter);
+        } else {
+          ctx.close().catch(() => {});
+        }
+      };
+      updateMeter();
+    } catch (e) {
+      console.warn('Lobby mic meter failed:', e);
     }
-    previewAvatar.classList.toggle('hidden', !lobbyCamOff);
-    btnPreviewCam.classList.toggle('muted', lobbyCamOff);
-    btnPreviewCam.innerHTML = `<i data-lucide="${lobbyCamOff ? 'video-off' : 'video'}"></i>`;
-    lucide.createIcons();
-  });
+  }
 
   // 3. Enter Room Trigger
   btnEnterRoom.addEventListener('click', async () => {
@@ -181,64 +193,53 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     lobbyModal.classList.add('hidden');
-    await startInstantP2PRoom();
+    await startVoiceSession();
   });
 
-  // 4. Start Instant P2P Session
-  async function startInstantP2PRoom() {
+  // 4. Start Voice Call Session
+  async function startVoiceSession() {
     localUserName.textContent = `${myUsername} (You)`;
     localAvatarCircle.textContent = myUsername.substring(0, 2).toUpperCase();
 
-    // Acquire Local Media
+    // Acquire ONLY Microphone Audio (Never Camera!)
     try {
-      localMediaStream = await navigator.mediaDevices.getUserMedia({
+      localVoiceStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: checkEchoCancellation.checked,
           noiseSuppression: checkNoiseSuppression.checked
         },
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30 }
-        }
+        video: false
       });
-      localVideo.srcObject = localMediaStream;
-      localAvatar.classList.add('hidden');
-      setupLocalAudioVisualizer(localMediaStream);
+      setupLocalAudioVisualizer(localVoiceStream);
     } catch (err) {
-      console.warn('Webcam/Mic access denied or unavailable:', err);
-      localAvatar.classList.remove('hidden');
+      console.warn('Microphone access denied:', err);
+      showToast('Microphone access denied. You can still listen and chat.', 'error');
     }
 
     if (lobbyMuted) toggleMic(true);
-    if (lobbyCamOff) toggleCam(true);
 
-    // Initialize Instant P2P Room
-    peerRoom = new PeerRoom(currentRoomId, myUsername, localMediaStream);
+    // Initialize P2P Room with Audio Stream
+    peerRoom = new PeerRoom(currentRoomId, myUsername, localVoiceStream);
 
     peerRoom.onStatusChange = (status) => {
       latencyDisplay.textContent = status;
     };
 
-    // When another peer joins
+    // Remote peer joined
     peerRoom.onPeerJoined = (peerId, username) => {
-      console.log('[P2P] Remote peer joined:', peerId, username);
-      addRemoteParticipantTile(peerId, username);
+      addRemoteVoiceTile(peerId, username);
       updateParticipantsCount();
-      showToast(`${username} connected to room!`, 'success');
+      showToast(`${username} connected to voice!`, 'success');
 
-      // Send our states to the peer
       peerRoom.broadcast({
         type: 'meta',
-        isMuted,
-        isCamOff
+        isMuted
       });
     };
 
-    // When a peer leaves
+    // Remote peer left
     peerRoom.onPeerLeft = (peerId, username) => {
-      console.log('[P2P] Remote peer left:', peerId, username);
-      removeRemoteParticipantTile(peerId);
+      removeRemoteVoiceTile(peerId);
       updateParticipantsCount();
       showToast(`${username} left the room`, 'info');
 
@@ -247,36 +248,31 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     };
 
-    // Remote webcam / mic stream arrives
+    // Remote voice audio stream arrives
     peerRoom.onRemoteStream = (peerId, stream, username) => {
-      console.log('[P2P] Received media stream from peer:', peerId);
       let peer = remotePeers.get(peerId);
       if (!peer) {
-        addRemoteParticipantTile(peerId, username || 'Participant');
+        addRemoteVoiceTile(peerId, username || 'Participant');
         peer = remotePeers.get(peerId);
       }
 
-      if (peer && peer.videoEl) {
-        peer.videoEl.srcObject = stream;
-        const avatarEl = peer.tileEl.querySelector('.avatar-fallback');
-        if (avatarEl && stream.getVideoTracks().length > 0) {
-          avatarEl.classList.add('hidden');
-        }
+      if (peer && peer.audioEl) {
+        peer.audioEl.srcObject = stream;
+        setupRemoteAudioVisualizer(stream, peerId);
       }
     };
 
-    // Remote screen sharing stream arrives
+    // Remote screen sharing arrives
     peerRoom.onRemoteScreenStream = (peerId, stream, username) => {
-      console.log('[P2P] Received screen share from:', peerId);
       activeScreenPresenterId = peerId;
       screenVideo.srcObject = stream;
       screenPresenterName.textContent = `${username || 'Participant'}'s Screen`;
       screenStage.classList.remove('hidden');
       updateGridLayout();
-      showToast(`${username || 'Participant'} started screen sharing`, 'info');
+      showToast(`${username || 'Participant'} started screen sharing (60 FPS)`, 'info');
     };
 
-    // Remote screen sharing ended
+    // Remote screen sharing stopped
     peerRoom.onRemoteScreenStopped = (peerId) => {
       if (activeScreenPresenterId === peerId) {
         stopScreenStage();
@@ -284,7 +280,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     };
 
-    // P2P Text Chat arrives
+    // Incoming P2P Chat
     peerRoom.onChatMessage = (msg) => {
       appendChatMessage(msg);
       if (sidePanel.classList.contains('collapsed')) {
@@ -294,7 +290,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     };
 
-    // Peer state changes (mute, camera, speaking)
+    // Incoming Peer Meta (Mute / Speaking)
     peerRoom.onPeerMeta = (peerId, meta) => {
       let peer = remotePeers.get(peerId);
       if (!peer) return;
@@ -309,14 +305,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      if (typeof meta.isCamOff !== 'undefined') {
-        peer.isCamOff = meta.isCamOff;
-        const avatarEl = peer.tileEl.querySelector('.avatar-fallback');
-        if (avatarEl) {
-          avatarEl.classList.toggle('hidden', !meta.isCamOff);
-        }
-      }
-
       if (typeof meta.isSpeaking !== 'undefined') {
         const halo = peer.tileEl.querySelector('.speaking-halo');
         if (halo) halo.classList.toggle('active', meta.isSpeaking);
@@ -324,13 +312,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     };
 
-    // Connect to room
     await peerRoom.init();
-    showToast(`Room active: ${currentRoomId}`, 'success');
+    showToast(`Voice room connected: ${currentRoomId}`, 'success');
   }
 
-  // 5. Tile & Grid Management
-  function addRemoteParticipantTile(peerId, username) {
+  // 5. Voice Participant Tile Management
+  function addRemoteVoiceTile(peerId, username) {
     if (remotePeers.has(peerId)) return;
 
     const tile = document.createElement('div');
@@ -340,11 +327,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const initials = username ? username.substring(0, 2).toUpperCase() : 'P';
 
     tile.innerHTML = `
-      <div class="video-container">
-        <video id="video-${peerId}" autoplay playsinline></video>
-        <div class="avatar-fallback" id="avatar-${peerId}">
-          <div class="avatar-circle">${initials}</div>
-        </div>
+      <div class="voice-avatar-container">
+        <div class="avatar-circle">${initials}</div>
+        <div class="voice-wave-ring"></div>
+        <audio id="audio-${peerId}" autoplay playsinline></audio>
       </div>
       <div class="tile-bar">
         <div class="user-meta">
@@ -355,9 +341,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           <span class="status-icon remote-mic-status">
             <i data-lucide="mic"></i>
           </span>
-          <span class="status-icon remote-cam-status">
-            <i data-lucide="video"></i>
-          </span>
         </div>
       </div>
     `;
@@ -365,20 +348,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     participantsGrid.appendChild(tile);
     lucide.createIcons();
 
-    const videoEl = tile.querySelector('video');
+    const audioEl = tile.querySelector('audio');
     remotePeers.set(peerId, {
       username,
       tileEl: tile,
-      videoEl,
-      isMuted: false,
-      isCamOff: false
+      audioEl,
+      isMuted: false
     });
 
     updateGridLayout();
     updateParticipantsList();
   }
 
-  function removeRemoteParticipantTile(peerId) {
+  function removeRemoteVoiceTile(peerId) {
     const peer = remotePeers.get(peerId);
     if (peer && peer.tileEl) {
       peer.tileEl.remove();
@@ -389,7 +371,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function updateParticipantsCount() {
-    participantCount.textContent = `${remotePeers.size + 1} Online`;
+    participantCount.textContent = `${remotePeers.size + 1} In Voice`;
   }
 
   function updateGridLayout() {
@@ -416,7 +398,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 6. Dock Controls
   btnToggleMic.addEventListener('click', () => toggleMic());
-  btnToggleCam.addEventListener('click', () => toggleCam());
 
   function toggleMic(forceState) {
     if (typeof forceState === 'boolean') {
@@ -425,8 +406,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       isMuted = !isMuted;
     }
 
-    if (localMediaStream) {
-      const track = localMediaStream.getAudioTracks()[0];
+    if (localVoiceStream) {
+      const track = localVoiceStream.getAudioTracks()[0];
       if (track) track.enabled = !isMuted;
     }
 
@@ -440,31 +421,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       peerRoom.broadcast({ type: 'meta', isMuted });
     }
     showToast(isMuted ? 'Microphone muted' : 'Microphone unmuted', 'info');
-  }
-
-  function toggleCam(forceState) {
-    if (typeof forceState === 'boolean') {
-      isCamOff = forceState;
-    } else {
-      isCamOff = !isCamOff;
-    }
-
-    if (localMediaStream) {
-      const track = localMediaStream.getVideoTracks()[0];
-      if (track) track.enabled = !isCamOff;
-    }
-
-    btnToggleCam.classList.toggle('muted', isCamOff);
-    iconCam.setAttribute('data-lucide', isCamOff ? 'video-off' : 'video');
-    localAvatar.classList.toggle('hidden', !isCamOff);
-    localCamStatus.classList.toggle('muted', isCamOff);
-    localCamStatus.innerHTML = `<i data-lucide="${isCamOff ? 'video-off' : 'video'}"></i>`;
-    lucide.createIcons();
-
-    if (peerRoom) {
-      peerRoom.broadcast({ type: 'meta', isCamOff });
-    }
-    showToast(isCamOff ? 'Camera turned off' : 'Camera turned on', 'info');
   }
 
   // 60 FPS Screen Share
@@ -507,7 +463,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       screenStage.classList.remove('hidden');
       updateGridLayout();
 
-      // Call connected peers with the screen share stream
+      // Broadcast screen share to peers
       if (peerRoom) {
         peerRoom.startScreenShare(localScreenStream);
       }
@@ -565,21 +521,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 7. Speaking Visualizer
   function setupLocalAudioVisualizer(stream) {
     try {
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContext) return;
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
 
-      audioContext = new AudioContext();
+      audioContext = new AudioCtx();
       const source = audioContext.createMediaStreamSource(stream);
-      analyser = audioContext.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
+      localAnalyser = audioContext.createAnalyser();
+      localAnalyser.fftSize = 256;
+      source.connect(localAnalyser);
 
-      const bufferLength = analyser.frequencyBinCount;
+      const bufferLength = localAnalyser.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
       let wasSpeaking = false;
 
       setInterval(() => {
-        if (!analyser || isMuted) {
+        if (!localAnalyser || isMuted) {
           if (wasSpeaking) {
             wasSpeaking = false;
             localSpeakingHalo.classList.remove('active');
@@ -590,7 +546,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        analyser.getByteFrequencyData(dataArray);
+        localAnalyser.getByteFrequencyData(dataArray);
         let sum = 0;
         for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
         const avg = sum / bufferLength;
@@ -605,7 +561,43 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }, 100);
     } catch (e) {
-      console.warn('Web Audio speaking detector unavailable:', e);
+      console.warn('Local speaking detector failed:', e);
+    }
+  }
+
+  function setupRemoteAudioVisualizer(stream, peerId) {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+
+      const ctx = new AudioCtx();
+      const source = ctx.createMediaStreamSource(stream);
+      const anl = ctx.createAnalyser();
+      anl.fftSize = 256;
+      source.connect(anl);
+
+      const dataArray = new Uint8Array(anl.frequencyBinCount);
+      let wasSpeaking = false;
+
+      setInterval(() => {
+        const peer = remotePeers.get(peerId);
+        if (!peer || !peer.tileEl) return;
+
+        anl.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        const avg = sum / dataArray.length;
+        const isSpeaking = avg > 18;
+
+        if (isSpeaking !== wasSpeaking) {
+          wasSpeaking = isSpeaking;
+          const halo = peer.tileEl.querySelector('.speaking-halo');
+          if (halo) halo.classList.toggle('active', isSpeaking);
+          peer.tileEl.classList.toggle('speaking', isSpeaking);
+        }
+      }, 100);
+    } catch (e) {
+      console.warn('Remote speaking detector failed:', e);
     }
   }
 
@@ -703,7 +695,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const fullUrl = `${window.location.origin}${window.location.pathname}#room=${currentRoomId}`;
     try {
       await navigator.clipboard.writeText(fullUrl);
-      showToast('P2P Room link copied to clipboard!', 'success');
+      showToast('Voice room link copied to clipboard!', 'success');
       btnCopyLink.querySelector('.btn-label').textContent = 'Copied!';
       setTimeout(() => {
         btnCopyLink.querySelector('.btn-label').textContent = 'Share Link';
@@ -730,7 +722,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       selectAudioInput.innerHTML = '';
-      selectVideoInput.innerHTML = '';
       selectAudioOutput.innerHTML = '';
 
       devices.forEach((device) => {
@@ -739,7 +730,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         option.text = device.label || `${device.kind} (${selectAudioInput.length + 1})`;
 
         if (device.kind === 'audioinput') selectAudioInput.appendChild(option);
-        else if (device.kind === 'videoinput') selectVideoInput.appendChild(option);
         else if (device.kind === 'audiooutput') selectAudioOutput.appendChild(option);
       });
     } catch (e) {
@@ -755,11 +745,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 12. Hotkeys
+  // 12. Hotkeys (M = Mic, S = Screen, C = Chat)
   document.addEventListener('keydown', (e) => {
     if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
     if (e.key.toLowerCase() === 'm') btnToggleMic.click();
-    else if (e.key.toLowerCase() === 'v') btnToggleCam.click();
     else if (e.key.toLowerCase() === 's') btnToggleScreen.click();
     else if (e.key.toLowerCase() === 'c') btnToggleChat.click();
   });
